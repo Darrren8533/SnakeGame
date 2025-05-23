@@ -206,17 +206,229 @@ function startGameLoop(roomId: string, io: SocketIOServer): void {
   }, GAME_SPEED);
 }
 
+function setupSocketEvents(io: SocketIOServer) {
+  io.on('connection', (socket) => {
+    console.log('✅ Client connected successfully:', socket.id);
+
+    // Send immediate confirmation
+    socket.emit('connected', { 
+      id: socket.id, 
+      timestamp: new Date().toISOString(),
+      transport: socket.conn.transport.name
+    });
+
+    // Room joining logic
+    socket.on('join-room', ({ roomId, playerName }: { roomId: string; playerName: string }) => {
+      try {
+        console.log(`🎮 Player ${playerName} (${socket.id}) joining room ${roomId}`);
+        
+        if (!roomId || !playerName) {
+          console.error('❌ Invalid room ID or player name');
+          socket.emit('error', 'Room ID and player name are required');
+          return;
+        }
+
+        // Create room if needed
+        if (!rooms[roomId]) {
+          rooms[roomId] = {
+            id: roomId,
+            players: [],
+            maxPlayers: 4,
+            gameState: createInitialGameState(roomId),
+            createdAt: new Date(),
+          };
+          console.log(`🏠 Created new room: ${roomId}`);
+        }
+
+        const room = rooms[roomId];
+        
+        // Check if already in room
+        if (room.players.includes(socket.id)) {
+          console.log(`🔄 Player ${socket.id} already in room ${roomId}`);
+          socket.emit('player-joined', { playerId: socket.id });
+          io.to(roomId).emit('game-state', room.gameState);
+          return;
+        }
+        
+        // Check room capacity
+        if (room.players.length >= room.maxPlayers) {
+          console.error(`🚫 Room ${roomId} is full`);
+          socket.emit('error', 'Room is full');
+          return;
+        }
+
+        // Add player to room
+        socket.join(roomId);
+        room.players.push(socket.id);
+        
+        // Create player
+        const player = createPlayer(socket.id, playerName, room.players.length - 1);
+        room.gameState.players[socket.id] = player;
+        
+        // Generate initial food
+        if (room.gameState.food.length === 0) {
+          for (let i = 0; i < 3; i++) {
+            room.gameState.food.push(generateFood(room.gameState));
+          }
+        }
+
+        socket.emit('player-joined', { playerId: socket.id });
+        io.to(roomId).emit('game-state', room.gameState);
+        
+        console.log(`✅ Player ${playerName} joined room ${roomId}. Players: ${room.players.length}`);
+      } catch (error) {
+        console.error('❌ Error joining room:', error);
+        socket.emit('error', 'Failed to join room: ' + (error instanceof Error ? error.message : 'Unknown error'));
+      }
+    });
+
+    // Game start logic
+    socket.on('start-game', () => {
+      try {
+        const roomId = Array.from(socket.rooms).find(room => room !== socket.id);
+        if (!roomId || !rooms[roomId]) {
+          socket.emit('error', 'Room not found');
+          return;
+        }
+
+        const room = rooms[roomId];
+        
+        if (Object.keys(room.gameState.players).length < 2) {
+          socket.emit('error', 'Need at least 2 players to start');
+          return;
+        }
+
+        // Reset game state
+        room.gameState.gameStarted = true;
+        room.gameState.gameOver = false;
+        room.gameState.winner = undefined;
+        
+        // Reset players
+        const players = Object.values(room.gameState.players);
+        players.forEach((player: Player, index: number) => {
+          const startPositions = [
+            { x: 5, y: 10 },
+            { x: 25, y: 10 },
+            { x: 15, y: 5 },
+            { x: 15, y: 15 },
+          ];
+          
+          player.snake = [startPositions[index % startPositions.length]];
+          player.direction = 'RIGHT';
+          player.score = 0;
+          player.alive = true;
+        });
+        
+        // Generate new food
+        room.gameState.food = [];
+        for (let i = 0; i < 3; i++) {
+          room.gameState.food.push(generateFood(room.gameState));
+        }
+
+        io.to(roomId).emit('game-state', room.gameState);
+        startGameLoop(roomId, io);
+        
+        console.log(`🎮 Game started in room ${roomId}`);
+      } catch (error) {
+        console.error('❌ Error starting game:', error);
+        socket.emit('error', 'Failed to start game');
+      }
+    });
+
+    // Direction change
+    socket.on('change-direction', (direction: Direction) => {
+      try {
+        const roomId = Array.from(socket.rooms).find(room => room !== socket.id);
+        if (!roomId || !rooms[roomId]) return;
+
+        const player = rooms[roomId].gameState.players[socket.id];
+        if (!player || !player.alive) return;
+
+        const opposites: { [key in Direction]: Direction } = {
+          UP: 'DOWN',
+          DOWN: 'UP',
+          LEFT: 'RIGHT',
+          RIGHT: 'LEFT',
+        };
+
+        if (opposites[direction] !== player.direction) {
+          player.direction = direction;
+        }
+      } catch (error) {
+        console.error('❌ Error changing direction:', error);
+      }
+    });
+
+    // Leave room
+    socket.on('leave-room', () => {
+      try {
+        const roomId = Array.from(socket.rooms).find(room => room !== socket.id);
+        if (!roomId || !rooms[roomId]) return;
+
+        const room = rooms[roomId];
+        room.players = room.players.filter(id => id !== socket.id);
+        delete room.gameState.players[socket.id];
+        socket.leave(roomId);
+        
+        if (room.players.length === 0) {
+          if (gameIntervals[roomId]) {
+            clearInterval(gameIntervals[roomId]);
+            delete gameIntervals[roomId];
+          }
+          delete rooms[roomId];
+          console.log(`🧹 Cleaned up empty room: ${roomId}`);
+        } else {
+          io.to(roomId).emit('game-state', room.gameState);
+        }
+      } catch (error) {
+        console.error('❌ Error leaving room:', error);
+      }
+    });
+
+    // Disconnect handling
+    socket.on('disconnect', (reason) => {
+      try {
+        console.log('🔌 Client disconnected:', socket.id, 'Reason:', reason);
+        
+        const roomId = Array.from(socket.rooms).find(room => room !== socket.id);
+        if (!roomId || !rooms[roomId]) return;
+
+        const room = rooms[roomId];
+        room.players = room.players.filter(id => id !== socket.id);
+        delete room.gameState.players[socket.id];
+        
+        if (room.players.length === 0) {
+          if (gameIntervals[roomId]) {
+            clearInterval(gameIntervals[roomId]);
+            delete gameIntervals[roomId];
+          }
+          delete rooms[roomId];
+          console.log(`🧹 Cleaned up empty room: ${roomId}`);
+        } else {
+          io.to(roomId).emit('game-state', room.gameState);
+        }
+      } catch (error) {
+        console.error('❌ Error handling disconnect:', error);
+      }
+    });
+
+    socket.on('error', (error) => {
+      console.error('🔥 Socket error:', error);
+    });
+  });
+
+  // Server error handling
+  io.on('error', (error) => {
+    console.error('🔥 Socket.IO server error:', error);
+  });
+}
+
 export default function handler(req: NextApiRequest, res: NextApiResponseWithSocket) {
   // Enhanced logging for debugging
   console.log('=== Socket API Request ===');
   console.log('Method:', req.method);
   console.log('URL:', req.url);
   console.log('Query:', req.query);
-  console.log('Headers:', {
-    'content-type': req.headers['content-type'],
-    'origin': req.headers.origin,
-    'user-agent': req.headers['user-agent']?.substring(0, 50),
-  });
 
   // Set CORS headers for all requests
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -234,25 +446,30 @@ export default function handler(req: NextApiRequest, res: NextApiResponseWithSoc
   try {
     // Check if Socket.IO server already exists
     if (res.socket.server.io) {
-      console.log('Socket.IO server already running, delegating to existing instance');
-      // Let Socket.IO handle the request
+      console.log('🔄 Socket.IO server already exists, reusing instance');
+      // Don't return here - let Socket.IO handle the request
+      res.status(200).json({ 
+        success: true,
+        message: 'Socket.IO server already running',
+        timestamp: new Date().toISOString()
+      });
       return;
     }
 
-    console.log('Initializing new Socket.IO server...');
+    console.log('🚀 Initializing new Socket.IO server...');
 
-    // Create Socket.IO server with minimal, Vercel-optimized configuration
+    // Create Socket.IO server with Vercel-optimized configuration
     const io = new SocketIOServer(res.socket.server, {
       path: '/api/socket',
       addTrailingSlash: false,
-      // Minimal configuration for Vercel
+      // Vercel-optimized configuration
       transports: ['polling'],
       cors: {
         origin: "*",
         methods: ["GET", "POST"],
         credentials: false
       },
-      // Vercel-specific optimizations
+      // Stability settings for Vercel
       allowEIO3: true,
       pingTimeout: 60000,
       pingInterval: 25000,
@@ -260,7 +477,6 @@ export default function handler(req: NextApiRequest, res: NextApiResponseWithSoc
       maxHttpBufferSize: 1e6,
       serveClient: false,
       cookie: false,
-      // Additional stability settings
       connectTimeout: 45000,
       allowUpgrades: false, // Force polling only
     });
@@ -268,221 +484,8 @@ export default function handler(req: NextApiRequest, res: NextApiResponseWithSoc
     // Store the io instance
     res.socket.server.io = io;
 
-    // Enhanced connection handling
-    io.on('connection', (socket) => {
-      console.log('✅ Client connected successfully:', socket.id);
-
-      // Send immediate confirmation
-      socket.emit('connected', { 
-        id: socket.id, 
-        timestamp: new Date().toISOString(),
-        transport: socket.conn.transport.name
-      });
-
-      // Room joining logic
-      socket.on('join-room', ({ roomId, playerName }: { roomId: string; playerName: string }) => {
-        try {
-          console.log(`🎮 Player ${playerName} (${socket.id}) joining room ${roomId}`);
-          
-          if (!roomId || !playerName) {
-            console.error('❌ Invalid room ID or player name');
-            socket.emit('error', 'Room ID and player name are required');
-            return;
-          }
-
-          // Create room if needed
-          if (!rooms[roomId]) {
-            rooms[roomId] = {
-              id: roomId,
-              players: [],
-              maxPlayers: 4,
-              gameState: createInitialGameState(roomId),
-              createdAt: new Date(),
-            };
-            console.log(`🏠 Created new room: ${roomId}`);
-          }
-
-          const room = rooms[roomId];
-          
-          // Check if already in room
-          if (room.players.includes(socket.id)) {
-            console.log(`🔄 Player ${socket.id} already in room ${roomId}`);
-            socket.emit('player-joined', { playerId: socket.id });
-            io.to(roomId).emit('game-state', room.gameState);
-            return;
-          }
-          
-          // Check room capacity
-          if (room.players.length >= room.maxPlayers) {
-            console.error(`🚫 Room ${roomId} is full`);
-            socket.emit('error', 'Room is full');
-            return;
-          }
-
-          // Add player to room
-          socket.join(roomId);
-          room.players.push(socket.id);
-          
-          // Create player
-          const player = createPlayer(socket.id, playerName, room.players.length - 1);
-          room.gameState.players[socket.id] = player;
-          
-          // Generate initial food
-          if (room.gameState.food.length === 0) {
-            for (let i = 0; i < 3; i++) {
-              room.gameState.food.push(generateFood(room.gameState));
-            }
-          }
-
-          socket.emit('player-joined', { playerId: socket.id });
-          io.to(roomId).emit('game-state', room.gameState);
-          
-          console.log(`✅ Player ${playerName} joined room ${roomId}. Players: ${room.players.length}`);
-        } catch (error) {
-          console.error('❌ Error joining room:', error);
-          socket.emit('error', 'Failed to join room: ' + (error instanceof Error ? error.message : 'Unknown error'));
-        }
-      });
-
-      // Game start logic
-      socket.on('start-game', () => {
-        try {
-          const roomId = Array.from(socket.rooms).find(room => room !== socket.id);
-          if (!roomId || !rooms[roomId]) {
-            socket.emit('error', 'Room not found');
-            return;
-          }
-
-          const room = rooms[roomId];
-          
-          if (Object.keys(room.gameState.players).length < 2) {
-            socket.emit('error', 'Need at least 2 players to start');
-            return;
-          }
-
-          // Reset game state
-          room.gameState.gameStarted = true;
-          room.gameState.gameOver = false;
-          room.gameState.winner = undefined;
-          
-          // Reset players
-          const players = Object.values(room.gameState.players);
-          players.forEach((player: Player, index: number) => {
-            const startPositions = [
-              { x: 5, y: 10 },
-              { x: 25, y: 10 },
-              { x: 15, y: 5 },
-              { x: 15, y: 15 },
-            ];
-            
-            player.snake = [startPositions[index % startPositions.length]];
-            player.direction = 'RIGHT';
-            player.score = 0;
-            player.alive = true;
-          });
-          
-          // Generate new food
-          room.gameState.food = [];
-          for (let i = 0; i < 3; i++) {
-            room.gameState.food.push(generateFood(room.gameState));
-          }
-
-          io.to(roomId).emit('game-state', room.gameState);
-          startGameLoop(roomId, io);
-          
-          console.log(`🎮 Game started in room ${roomId}`);
-        } catch (error) {
-          console.error('❌ Error starting game:', error);
-          socket.emit('error', 'Failed to start game');
-        }
-      });
-
-      // Direction change
-      socket.on('change-direction', (direction: Direction) => {
-        try {
-          const roomId = Array.from(socket.rooms).find(room => room !== socket.id);
-          if (!roomId || !rooms[roomId]) return;
-
-          const player = rooms[roomId].gameState.players[socket.id];
-          if (!player || !player.alive) return;
-
-          const opposites: { [key in Direction]: Direction } = {
-            UP: 'DOWN',
-            DOWN: 'UP',
-            LEFT: 'RIGHT',
-            RIGHT: 'LEFT',
-          };
-
-          if (opposites[direction] !== player.direction) {
-            player.direction = direction;
-          }
-        } catch (error) {
-          console.error('❌ Error changing direction:', error);
-        }
-      });
-
-      // Leave room
-      socket.on('leave-room', () => {
-        try {
-          const roomId = Array.from(socket.rooms).find(room => room !== socket.id);
-          if (!roomId || !rooms[roomId]) return;
-
-          const room = rooms[roomId];
-          room.players = room.players.filter(id => id !== socket.id);
-          delete room.gameState.players[socket.id];
-          socket.leave(roomId);
-          
-          if (room.players.length === 0) {
-            if (gameIntervals[roomId]) {
-              clearInterval(gameIntervals[roomId]);
-              delete gameIntervals[roomId];
-            }
-            delete rooms[roomId];
-            console.log(`🧹 Cleaned up empty room: ${roomId}`);
-          } else {
-            io.to(roomId).emit('game-state', room.gameState);
-          }
-        } catch (error) {
-          console.error('❌ Error leaving room:', error);
-        }
-      });
-
-      // Disconnect handling
-      socket.on('disconnect', (reason) => {
-        try {
-          console.log('🔌 Client disconnected:', socket.id, 'Reason:', reason);
-          
-          const roomId = Array.from(socket.rooms).find(room => room !== socket.id);
-          if (!roomId || !rooms[roomId]) return;
-
-          const room = rooms[roomId];
-          room.players = room.players.filter(id => id !== socket.id);
-          delete room.gameState.players[socket.id];
-          
-          if (room.players.length === 0) {
-            if (gameIntervals[roomId]) {
-              clearInterval(gameIntervals[roomId]);
-              delete gameIntervals[roomId];
-            }
-            delete rooms[roomId];
-            console.log(`🧹 Cleaned up empty room: ${roomId}`);
-          } else {
-            io.to(roomId).emit('game-state', room.gameState);
-          }
-        } catch (error) {
-          console.error('❌ Error handling disconnect:', error);
-        }
-      });
-
-      socket.on('error', (error) => {
-        console.error('🔥 Socket error:', error);
-      });
-    });
-
-    // Server error handling
-    io.on('error', (error) => {
-      console.error('🔥 Socket.IO server error:', error);
-    });
+    // Setup all socket events
+    setupSocketEvents(io);
 
     console.log('✅ Socket.IO server initialized successfully');
     
