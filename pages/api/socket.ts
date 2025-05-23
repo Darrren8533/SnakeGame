@@ -215,6 +215,15 @@ export default function handler(req: NextApiRequest, res: NextApiResponseWithSoc
   const io = new SocketIOServer(res.socket.server, {
     path: '/api/socket',
     addTrailingSlash: false,
+    // Vercel-specific configuration
+    transports: ['polling'], // Force polling transport for Vercel
+    cors: {
+      origin: "*",
+      methods: ["GET", "POST"]
+    },
+    allowEIO3: true,
+    pingTimeout: 60000,
+    pingInterval: 25000,
   });
 
   res.socket.server.io = io;

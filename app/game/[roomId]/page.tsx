@@ -44,15 +44,30 @@ export default function GamePage() {
   useEffect(() => {
     const newSocket = io({
       path: '/api/socket',
+      // Vercel-specific configuration
+      transports: ['polling'], // Force polling transport for Vercel
+      forceNew: true,
+      reconnection: true,
+      timeout: 60000,
+      reconnectionDelay: 1000,
+      reconnectionAttempts: 5,
+      reconnectionDelayMax: 5000,
     });
 
     newSocket.on('connect', () => {
+      console.log('Connected to server');
       setConnected(true);
       newSocket.emit('join-room', { roomId, playerName });
     });
 
     newSocket.on('disconnect', () => {
+      console.log('Disconnected from server');
       setConnected(false);
+    });
+
+    newSocket.on('connect_error', (error) => {
+      console.error('Connection error:', error);
+      setError('Failed to connect to server. Please try again.');
     });
 
     newSocket.on('player-joined', (data) => {
@@ -184,11 +199,16 @@ export default function GamePage() {
     return (
       <div className="min-h-screen flex items-center justify-center p-4">
         <div className="game-card text-center">
-          <h2 className="text-2xl font-bold text-red-500 mb-4">Error</h2>
+          <h2 className="text-2xl font-bold text-red-500 mb-4">Connection Error</h2>
           <p className="text-gray-300 mb-4">{error}</p>
-          <button onClick={() => router.push('/')} className="game-button">
-            Back to Home
-          </button>
+          <div className="space-y-2">
+            <button onClick={() => window.location.reload()} className="game-button">
+              Retry Connection
+            </button>
+            <button onClick={() => router.push('/')} className="game-button bg-gray-600 hover:bg-gray-700">
+              Back to Home
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -199,7 +219,8 @@ export default function GamePage() {
       <div className="min-h-screen flex items-center justify-center p-4">
         <div className="game-card text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-game-accent mx-auto mb-4"></div>
-          <p className="text-gray-300">Connecting to game...</p>
+          <p className="text-gray-300">Connecting to game server...</p>
+          <p className="text-sm text-gray-500 mt-2">This may take a moment on Vercel</p>
         </div>
       </div>
     );
@@ -216,6 +237,9 @@ export default function GamePage() {
           <div>
             <h1 className="text-2xl font-bold text-game-accent">Room: {roomId}</h1>
             <p className="text-gray-300">Players: {playerList.length}/4</p>
+            <p className="text-sm text-gray-500">
+              {connected ? '🟢 Connected' : '🔴 Disconnected'}
+            </p>
           </div>
           <button onClick={leaveRoom} className="game-button bg-gray-600 hover:bg-gray-700">
             Leave Room
@@ -304,6 +328,15 @@ export default function GamePage() {
                 <p>↓ or S: Move Down</p>
                 <p>← or A: Move Left</p>
                 <p>→ or D: Move Right</p>
+              </div>
+            </div>
+
+            {/* Connection Status */}
+            <div className="game-card">
+              <h3 className="text-lg font-bold mb-4">Status</h3>
+              <div className="text-sm text-gray-400 space-y-1">
+                <p>Transport: Polling</p>
+                <p>Optimized for Vercel</p>
               </div>
             </div>
           </div>
