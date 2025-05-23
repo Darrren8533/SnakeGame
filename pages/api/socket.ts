@@ -207,77 +207,90 @@ function startGameLoop(roomId: string, io: SocketIOServer): void {
 }
 
 export default function handler(req: NextApiRequest, res: NextApiResponseWithSocket) {
-  console.log('Socket API called:', {
-    method: req.method,
-    url: req.url,
-    headers: {
-      'user-agent': req.headers['user-agent'],
-      'origin': req.headers.origin,
-      'referer': req.headers.referer,
-    },
-    query: req.query,
+  // Enhanced logging for debugging
+  console.log('=== Socket API Request ===');
+  console.log('Method:', req.method);
+  console.log('URL:', req.url);
+  console.log('Query:', req.query);
+  console.log('Headers:', {
+    'content-type': req.headers['content-type'],
+    'origin': req.headers.origin,
+    'user-agent': req.headers['user-agent']?.substring(0, 50),
   });
 
-  // Handle CORS preflight requests
+  // Set CORS headers for all requests
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Credentials', 'false');
+
+  // Handle preflight requests
   if (req.method === 'OPTIONS') {
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    console.log('Handling OPTIONS request');
     res.status(200).end();
     return;
   }
 
-  // Check if Socket.IO server is already running
-  if (res.socket.server.io) {
-    console.log('Socket.IO server already running');
-    res.status(200).json({ message: 'Socket server already running' });
-    return;
-  }
-
-  console.log('Initializing Socket.IO server...');
-
   try {
+    // Check if Socket.IO server already exists
+    if (res.socket.server.io) {
+      console.log('Socket.IO server already running, delegating to existing instance');
+      // Let Socket.IO handle the request
+      return;
+    }
+
+    console.log('Initializing new Socket.IO server...');
+
+    // Create Socket.IO server with minimal, Vercel-optimized configuration
     const io = new SocketIOServer(res.socket.server, {
       path: '/api/socket',
       addTrailingSlash: false,
-      // Enhanced Vercel configuration
+      // Minimal configuration for Vercel
       transports: ['polling'],
       cors: {
         origin: "*",
-        methods: ["GET", "POST", "OPTIONS"],
-        allowedHeaders: ["Content-Type"],
+        methods: ["GET", "POST"],
         credentials: false
       },
+      // Vercel-specific optimizations
       allowEIO3: true,
       pingTimeout: 60000,
       pingInterval: 25000,
       upgradeTimeout: 30000,
       maxHttpBufferSize: 1e6,
-      // Additional Vercel-specific settings
       serveClient: false,
       cookie: false,
+      // Additional stability settings
+      connectTimeout: 45000,
+      allowUpgrades: false, // Force polling only
     });
 
+    // Store the io instance
     res.socket.server.io = io;
 
+    // Enhanced connection handling
     io.on('connection', (socket) => {
-      console.log('Client connected:', socket.id);
+      console.log('✅ Client connected successfully:', socket.id);
 
-      // Send connection confirmation
-      socket.emit('connected', { id: socket.id, timestamp: new Date().toISOString() });
+      // Send immediate confirmation
+      socket.emit('connected', { 
+        id: socket.id, 
+        timestamp: new Date().toISOString(),
+        transport: socket.conn.transport.name
+      });
 
+      // Room joining logic
       socket.on('join-room', ({ roomId, playerName }: { roomId: string; playerName: string }) => {
         try {
-          console.log(`Player ${playerName} (${socket.id}) attempting to join room ${roomId}`);
+          console.log(`🎮 Player ${playerName} (${socket.id}) joining room ${roomId}`);
           
-          // Validate input
           if (!roomId || !playerName) {
-            console.error('Invalid room ID or player name');
+            console.error('❌ Invalid room ID or player name');
             socket.emit('error', 'Room ID and player name are required');
             return;
           }
 
-          // Create room if it doesn't exist
+          // Create room if needed
           if (!rooms[roomId]) {
             rooms[roomId] = {
               id: roomId,
@@ -286,22 +299,22 @@ export default function handler(req: NextApiRequest, res: NextApiResponseWithSoc
               gameState: createInitialGameState(roomId),
               createdAt: new Date(),
             };
-            console.log(`Created new room: ${roomId}`);
+            console.log(`🏠 Created new room: ${roomId}`);
           }
 
           const room = rooms[roomId];
           
-          // Check if player is already in the room
+          // Check if already in room
           if (room.players.includes(socket.id)) {
-            console.log(`Player ${socket.id} already in room ${roomId}`);
+            console.log(`🔄 Player ${socket.id} already in room ${roomId}`);
             socket.emit('player-joined', { playerId: socket.id });
             io.to(roomId).emit('game-state', room.gameState);
             return;
           }
           
-          // Check if room is full
+          // Check room capacity
           if (room.players.length >= room.maxPlayers) {
-            console.error(`Room ${roomId} is full`);
+            console.error(`🚫 Room ${roomId} is full`);
             socket.emit('error', 'Room is full');
             return;
           }
@@ -324,18 +337,18 @@ export default function handler(req: NextApiRequest, res: NextApiResponseWithSoc
           socket.emit('player-joined', { playerId: socket.id });
           io.to(roomId).emit('game-state', room.gameState);
           
-          console.log(`Player ${playerName} (${socket.id}) joined room ${roomId} successfully. Room now has ${room.players.length} players.`);
+          console.log(`✅ Player ${playerName} joined room ${roomId}. Players: ${room.players.length}`);
         } catch (error) {
-          console.error('Error joining room:', error);
+          console.error('❌ Error joining room:', error);
           socket.emit('error', 'Failed to join room: ' + (error instanceof Error ? error.message : 'Unknown error'));
         }
       });
 
+      // Game start logic
       socket.on('start-game', () => {
         try {
           const roomId = Array.from(socket.rooms).find(room => room !== socket.id);
           if (!roomId || !rooms[roomId]) {
-            console.error('Room not found for start-game');
             socket.emit('error', 'Room not found');
             return;
           }
@@ -343,7 +356,6 @@ export default function handler(req: NextApiRequest, res: NextApiResponseWithSoc
           const room = rooms[roomId];
           
           if (Object.keys(room.gameState.players).length < 2) {
-            console.error('Not enough players to start game');
             socket.emit('error', 'Need at least 2 players to start');
             return;
           }
@@ -353,7 +365,7 @@ export default function handler(req: NextApiRequest, res: NextApiResponseWithSoc
           room.gameState.gameOver = false;
           room.gameState.winner = undefined;
           
-          // Reset all players
+          // Reset players
           const players = Object.values(room.gameState.players);
           players.forEach((player: Player, index: number) => {
             const startPositions = [
@@ -378,13 +390,14 @@ export default function handler(req: NextApiRequest, res: NextApiResponseWithSoc
           io.to(roomId).emit('game-state', room.gameState);
           startGameLoop(roomId, io);
           
-          console.log(`Game started in room ${roomId} with ${players.length} players`);
+          console.log(`🎮 Game started in room ${roomId}`);
         } catch (error) {
-          console.error('Error starting game:', error);
-          socket.emit('error', 'Failed to start game: ' + (error instanceof Error ? error.message : 'Unknown error'));
+          console.error('❌ Error starting game:', error);
+          socket.emit('error', 'Failed to start game');
         }
       });
 
+      // Direction change
       socket.on('change-direction', (direction: Direction) => {
         try {
           const roomId = Array.from(socket.rooms).find(room => room !== socket.id);
@@ -393,7 +406,6 @@ export default function handler(req: NextApiRequest, res: NextApiResponseWithSoc
           const player = rooms[roomId].gameState.players[socket.id];
           if (!player || !player.alive) return;
 
-          // Prevent reverse direction
           const opposites: { [key in Direction]: Direction } = {
             UP: 'DOWN',
             DOWN: 'UP',
@@ -405,89 +417,88 @@ export default function handler(req: NextApiRequest, res: NextApiResponseWithSoc
             player.direction = direction;
           }
         } catch (error) {
-          console.error('Error changing direction:', error);
+          console.error('❌ Error changing direction:', error);
         }
       });
 
+      // Leave room
       socket.on('leave-room', () => {
         try {
           const roomId = Array.from(socket.rooms).find(room => room !== socket.id);
           if (!roomId || !rooms[roomId]) return;
 
           const room = rooms[roomId];
-          
-          // Remove player from room
           room.players = room.players.filter(id => id !== socket.id);
           delete room.gameState.players[socket.id];
-          
           socket.leave(roomId);
           
-          // If room is empty, clean up
           if (room.players.length === 0) {
             if (gameIntervals[roomId]) {
               clearInterval(gameIntervals[roomId]);
               delete gameIntervals[roomId];
             }
             delete rooms[roomId];
-            console.log(`Cleaned up empty room: ${roomId}`);
+            console.log(`🧹 Cleaned up empty room: ${roomId}`);
           } else {
             io.to(roomId).emit('game-state', room.gameState);
           }
-          
-          console.log(`Player ${socket.id} left room ${roomId}`);
         } catch (error) {
-          console.error('Error leaving room:', error);
+          console.error('❌ Error leaving room:', error);
         }
       });
 
+      // Disconnect handling
       socket.on('disconnect', (reason) => {
         try {
-          console.log('Client disconnected:', socket.id, 'Reason:', reason);
+          console.log('🔌 Client disconnected:', socket.id, 'Reason:', reason);
           
           const roomId = Array.from(socket.rooms).find(room => room !== socket.id);
           if (!roomId || !rooms[roomId]) return;
 
           const room = rooms[roomId];
-          
-          // Remove player from room
           room.players = room.players.filter(id => id !== socket.id);
           delete room.gameState.players[socket.id];
           
-          // If room is empty, clean up
           if (room.players.length === 0) {
             if (gameIntervals[roomId]) {
               clearInterval(gameIntervals[roomId]);
               delete gameIntervals[roomId];
             }
             delete rooms[roomId];
-            console.log(`Cleaned up empty room: ${roomId}`);
+            console.log(`🧹 Cleaned up empty room: ${roomId}`);
           } else {
             io.to(roomId).emit('game-state', room.gameState);
           }
         } catch (error) {
-          console.error('Error handling disconnect:', error);
+          console.error('❌ Error handling disconnect:', error);
         }
       });
 
       socket.on('error', (error) => {
-        console.error('Socket error:', error);
+        console.error('🔥 Socket error:', error);
       });
     });
 
+    // Server error handling
     io.on('error', (error) => {
-      console.error('Socket.IO server error:', error);
+      console.error('🔥 Socket.IO server error:', error);
     });
 
-    console.log('Socket.IO server initialized successfully');
+    console.log('✅ Socket.IO server initialized successfully');
+    
+    // Return success response
     res.status(200).json({ 
-      message: 'Socket server started successfully',
+      success: true,
+      message: 'Socket.IO server initialized',
       timestamp: new Date().toISOString(),
       transport: 'polling'
     });
+
   } catch (error) {
-    console.error('Failed to initialize Socket.IO server:', error);
+    console.error('💥 Failed to initialize Socket.IO server:', error);
     res.status(500).json({ 
-      error: 'Failed to initialize socket server',
+      success: false,
+      error: 'Failed to initialize Socket.IO server',
       details: error instanceof Error ? error.message : 'Unknown error',
       timestamp: new Date().toISOString()
     });

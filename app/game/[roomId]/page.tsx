@@ -47,30 +47,32 @@ export default function GamePage() {
     let newSocket: Socket | null = null;
 
     const connectSocket = () => {
-      console.log('Attempting to connect to Socket.IO server...');
+      console.log('🔌 Attempting to connect to Socket.IO server...');
       
       // Get the current origin for the connection
       const socketUrl = typeof window !== 'undefined' ? window.location.origin : '';
+      console.log('🌐 Connecting to:', socketUrl);
       
       newSocket = io(socketUrl, {
         path: '/api/socket',
-        // Enhanced Vercel configuration
+        // Simplified configuration for better Vercel compatibility
         transports: ['polling'],
         forceNew: true,
-        reconnection: true,
+        autoConnect: true,
+        // Connection settings
         timeout: 20000,
+        reconnection: true,
         reconnectionDelay: 1000,
-        reconnectionAttempts: 10,
+        reconnectionAttempts: 5,
         reconnectionDelayMax: 5000,
-        // Additional settings for Vercel
+        // Force polling only for stability
         upgrade: false,
         rememberUpgrade: false,
-        autoConnect: true,
-        // Remove query parameters from initial connection
       });
 
       newSocket.on('connect', () => {
-        console.log('Connected to server with ID:', newSocket?.id);
+        console.log('✅ Connected to server with ID:', newSocket?.id);
+        console.log('🚀 Transport:', newSocket?.io.engine.transport.name);
         setConnected(true);
         setError('');
         setConnectionAttempts(0);
@@ -81,17 +83,17 @@ export default function GamePage() {
           reconnectTimeoutRef.current = null;
         }
         
-        // Join room after successful connection (send as event data instead of query params)
-        console.log('Sending join-room event with:', { roomId, playerName });
+        // Join room after successful connection
+        console.log('🎮 Sending join-room event with:', { roomId, playerName });
         newSocket?.emit('join-room', { roomId, playerName });
       });
 
       newSocket.on('connected', (data) => {
-        console.log('Server confirmed connection:', data);
+        console.log('🎉 Server confirmed connection:', data);
       });
 
       newSocket.on('disconnect', (reason) => {
-        console.log('Disconnected from server. Reason:', reason);
+        console.log('🔌 Disconnected from server. Reason:', reason);
         setConnected(false);
         
         // Only show error for unexpected disconnections
@@ -101,20 +103,20 @@ export default function GamePage() {
       });
 
       newSocket.on('connect_error', (error) => {
-        console.error('Connection error:', error);
+        console.error('❌ Connection error:', error);
         setConnected(false);
         setConnectionAttempts(prev => prev + 1);
         
         // Show user-friendly error messages
-        if (connectionAttempts < 5) {
-          setError(`Connection attempt ${connectionAttempts + 1}/5. Retrying...`);
+        if (connectionAttempts < 3) {
+          setError(`Connection attempt ${connectionAttempts + 1}/3. Retrying...`);
         } else {
           setError('Failed to connect to server. Please check your internet connection and try again.');
         }
       });
 
       newSocket.on('reconnect', (attemptNumber) => {
-        console.log('Reconnected after', attemptNumber, 'attempts');
+        console.log('🔄 Reconnected after', attemptNumber, 'attempts');
         setError('');
         setConnectionAttempts(0);
         // Re-join room after reconnection
@@ -122,17 +124,17 @@ export default function GamePage() {
       });
 
       newSocket.on('reconnect_error', (error) => {
-        console.error('Reconnection error:', error);
+        console.error('🔄 Reconnection error:', error);
         setConnectionAttempts(prev => prev + 1);
       });
 
       newSocket.on('reconnect_failed', () => {
-        console.error('Failed to reconnect');
+        console.error('💥 Failed to reconnect');
         setError('Failed to reconnect to server. Please refresh the page.');
       });
 
       newSocket.on('player-joined', (data) => {
-        console.log('Player joined successfully:', data);
+        console.log('🎮 Player joined successfully:', data);
         setPlayerId(data.playerId);
       });
 
@@ -141,7 +143,7 @@ export default function GamePage() {
       });
 
       newSocket.on('error', (errorMsg: string) => {
-        console.error('Server error:', errorMsg);
+        console.error('🔥 Server error:', errorMsg);
         setError(errorMsg);
       });
 
@@ -277,7 +279,7 @@ export default function GamePage() {
     window.location.reload();
   };
 
-  if (error && connectionAttempts >= 5) {
+  if (error && connectionAttempts >= 3) {
     return (
       <div className="min-h-screen flex items-center justify-center p-4">
         <div className="game-card text-center">
@@ -305,9 +307,9 @@ export default function GamePage() {
             {error || 'Connecting to game server...'}
           </p>
           <p className="text-sm text-gray-500 mt-2">
-            {connectionAttempts > 0 ? `Attempt ${connectionAttempts}/5` : 'This may take a moment on Vercel'}
+            {connectionAttempts > 0 ? `Attempt ${connectionAttempts}/3` : 'This may take a moment on Vercel'}
           </p>
-          {connectionAttempts > 2 && (
+          {connectionAttempts > 1 && (
             <button onClick={retryConnection} className="game-button mt-4">
               Force Retry
             </button>
