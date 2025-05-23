@@ -1,0 +1,49 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    font-family: 'Inter', system-ui, sans-serif;
+  }
+  
+  body {
+    @apply bg-game-bg text-white;
+  }
+}
+
+@layer components {
+  .game-button {
+    @apply bg-game-accent hover:bg-red-600 text-white font-bold py-3 px-6 rounded-lg transition-all duration-200 transform hover:scale-105 active:scale-95;
+  }
+  
+  .game-input {
+    @apply bg-game-primary border border-game-secondary text-white px-4 py-2 rounded-lg focus:outline-none focus:border-game-accent transition-colors;
+  }
+  
+  .game-card {
+    @apply bg-game-primary border border-game-secondary rounded-xl p-6 shadow-lg;
+  }
+}
+
+.snake-segment {
+  background: linear-gradient(45deg, #4ade80, #22c55e);
+  border-radius: 2px;
+  box-shadow: 0 0 10px rgba(74, 222, 128, 0.3);
+}
+
+.food {
+  background: radial-gradient(circle, #ef4444, #dc2626);
+  border-radius: 50%;
+  box-shadow: 0 0 15px rgba(239, 68, 68, 0.5);
+  animation: pulse 1s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.1);
+  }
+} 
