@@ -24,9 +24,14 @@
         },
         {
           "key": "Access-Control-Allow-Headers",
-          "value": "Content-Type, Authorization"
+          "value": "Content-Type, Authorization, x-socket-id"
+        },
+        {
+          "key": "Access-Control-Allow-Credentials",
+          "value": "false"
         }
       ]
     }
-  ]
+  ],
+  "buildCommand": "next build"
 } 
