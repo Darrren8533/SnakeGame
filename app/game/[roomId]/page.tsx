@@ -66,10 +66,7 @@ export default function GamePage() {
         upgrade: false,
         rememberUpgrade: false,
         autoConnect: true,
-        query: {
-          roomId,
-          playerName
-        }
+        // Remove query parameters from initial connection
       });
 
       newSocket.on('connect', () => {
@@ -84,7 +81,8 @@ export default function GamePage() {
           reconnectTimeoutRef.current = null;
         }
         
-        // Join room after successful connection
+        // Join room after successful connection (send as event data instead of query params)
+        console.log('Sending join-room event with:', { roomId, playerName });
         newSocket?.emit('join-room', { roomId, playerName });
       });
 
@@ -119,6 +117,8 @@ export default function GamePage() {
         console.log('Reconnected after', attemptNumber, 'attempts');
         setError('');
         setConnectionAttempts(0);
+        // Re-join room after reconnection
+        newSocket?.emit('join-room', { roomId, playerName });
       });
 
       newSocket.on('reconnect_error', (error) => {

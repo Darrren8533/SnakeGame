@@ -207,6 +207,17 @@ function startGameLoop(roomId: string, io: SocketIOServer): void {
 }
 
 export default function handler(req: NextApiRequest, res: NextApiResponseWithSocket) {
+  console.log('Socket API called:', {
+    method: req.method,
+    url: req.url,
+    headers: {
+      'user-agent': req.headers['user-agent'],
+      'origin': req.headers.origin,
+      'referer': req.headers.referer,
+    },
+    query: req.query,
+  });
+
   // Handle CORS preflight requests
   if (req.method === 'OPTIONS') {
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -253,12 +264,19 @@ export default function handler(req: NextApiRequest, res: NextApiResponseWithSoc
       console.log('Client connected:', socket.id);
 
       // Send connection confirmation
-      socket.emit('connected', { id: socket.id });
+      socket.emit('connected', { id: socket.id, timestamp: new Date().toISOString() });
 
       socket.on('join-room', ({ roomId, playerName }: { roomId: string; playerName: string }) => {
         try {
-          console.log(`Player ${playerName} attempting to join room ${roomId}`);
+          console.log(`Player ${playerName} (${socket.id}) attempting to join room ${roomId}`);
           
+          // Validate input
+          if (!roomId || !playerName) {
+            console.error('Invalid room ID or player name');
+            socket.emit('error', 'Room ID and player name are required');
+            return;
+          }
+
           // Create room if it doesn't exist
           if (!rooms[roomId]) {
             rooms[roomId] = {
@@ -273,8 +291,17 @@ export default function handler(req: NextApiRequest, res: NextApiResponseWithSoc
 
           const room = rooms[roomId];
           
+          // Check if player is already in the room
+          if (room.players.includes(socket.id)) {
+            console.log(`Player ${socket.id} already in room ${roomId}`);
+            socket.emit('player-joined', { playerId: socket.id });
+            io.to(roomId).emit('game-state', room.gameState);
+            return;
+          }
+          
           // Check if room is full
           if (room.players.length >= room.maxPlayers) {
+            console.error(`Room ${roomId} is full`);
             socket.emit('error', 'Room is full');
             return;
           }
@@ -297,10 +324,10 @@ export default function handler(req: NextApiRequest, res: NextApiResponseWithSoc
           socket.emit('player-joined', { playerId: socket.id });
           io.to(roomId).emit('game-state', room.gameState);
           
-          console.log(`Player ${playerName} joined room ${roomId} successfully`);
+          console.log(`Player ${playerName} (${socket.id}) joined room ${roomId} successfully. Room now has ${room.players.length} players.`);
         } catch (error) {
           console.error('Error joining room:', error);
-          socket.emit('error', 'Failed to join room');
+          socket.emit('error', 'Failed to join room: ' + (error instanceof Error ? error.message : 'Unknown error'));
         }
       });
 
@@ -308,6 +335,7 @@ export default function handler(req: NextApiRequest, res: NextApiResponseWithSoc
         try {
           const roomId = Array.from(socket.rooms).find(room => room !== socket.id);
           if (!roomId || !rooms[roomId]) {
+            console.error('Room not found for start-game');
             socket.emit('error', 'Room not found');
             return;
           }
@@ -315,6 +343,7 @@ export default function handler(req: NextApiRequest, res: NextApiResponseWithSoc
           const room = rooms[roomId];
           
           if (Object.keys(room.gameState.players).length < 2) {
+            console.error('Not enough players to start game');
             socket.emit('error', 'Need at least 2 players to start');
             return;
           }
@@ -349,10 +378,10 @@ export default function handler(req: NextApiRequest, res: NextApiResponseWithSoc
           io.to(roomId).emit('game-state', room.gameState);
           startGameLoop(roomId, io);
           
-          console.log(`Game started in room ${roomId}`);
+          console.log(`Game started in room ${roomId} with ${players.length} players`);
         } catch (error) {
           console.error('Error starting game:', error);
-          socket.emit('error', 'Failed to start game');
+          socket.emit('error', 'Failed to start game: ' + (error instanceof Error ? error.message : 'Unknown error'));
         }
       });
 
@@ -405,7 +434,7 @@ export default function handler(req: NextApiRequest, res: NextApiResponseWithSoc
             io.to(roomId).emit('game-state', room.gameState);
           }
           
-          console.log(`Player left room ${roomId}`);
+          console.log(`Player ${socket.id} left room ${roomId}`);
         } catch (error) {
           console.error('Error leaving room:', error);
         }
@@ -450,9 +479,17 @@ export default function handler(req: NextApiRequest, res: NextApiResponseWithSoc
     });
 
     console.log('Socket.IO server initialized successfully');
-    res.status(200).json({ message: 'Socket server started successfully' });
+    res.status(200).json({ 
+      message: 'Socket server started successfully',
+      timestamp: new Date().toISOString(),
+      transport: 'polling'
+    });
   } catch (error) {
     console.error('Failed to initialize Socket.IO server:', error);
-    res.status(500).json({ error: 'Failed to initialize socket server' });
+    res.status(500).json({ 
+      error: 'Failed to initialize socket server',
+      details: error instanceof Error ? error.message : 'Unknown error',
+      timestamp: new Date().toISOString()
+    });
   }
 } 

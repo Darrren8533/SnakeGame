@@ -4,15 +4,9 @@
       "maxDuration": 30
     }
   },
-  "rewrites": [
-    {
-      "source": "/socket.io/(.*)",
-      "destination": "/api/socket"
-    }
-  ],
   "headers": [
     {
-      "source": "/api/socket",
+      "source": "/api/(.*)",
       "headers": [
         {
           "key": "Access-Control-Allow-Origin",
@@ -24,14 +18,9 @@
         },
         {
           "key": "Access-Control-Allow-Headers",
-          "value": "Content-Type, Authorization, x-socket-id"
-        },
-        {
-          "key": "Access-Control-Allow-Credentials",
-          "value": "false"
+          "value": "Content-Type, Authorization"
         }
       ]
     }
-  ],
-  "buildCommand": "next build"
+  ]
 } 
