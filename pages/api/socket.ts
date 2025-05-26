@@ -217,6 +217,15 @@ function setupSocketEvents(io: SocketIOServer) {
       transport: socket.conn.transport.name
     });
 
+    // Heartbeat handling for Render platform
+    socket.on('ping', (data) => {
+      console.log('💓 Received ping from client:', socket.id);
+      socket.emit('pong', { 
+        timestamp: Date.now(),
+        clientTimestamp: data?.timestamp 
+      });
+    });
+
     // Room joining logic
     socket.on('join-room', ({ roomId, playerName }: { roomId: string; playerName: string }) => {
       try {
